@@ -95,7 +95,7 @@ String serialize() {
     root["day"] = stats.dbStats[i].day;
     JsonArray& array = root.createNestedArray("data");
 
-    for (int j = 0; j < numberOfSavedDays; j++) {
+    for (int j = 0; j < numberOfSavedHours; j++) {
       array.add(stats.dbStats[i].dutyHour[j]);
     }
     String jsonTemp;
@@ -244,7 +244,7 @@ void loop(void) {
         ledcWrite(LEDC_CHANNEL_1_G, duty);
         ledcWrite(LEDC_CHANNEL_2_B, duty);
         motionDetected = true;
-        Serial.println("motionDetected");
+        //Serial.println("motionDetected");
         detectTime = millis();
       }
     }
@@ -276,7 +276,7 @@ int getHour() {
 void autoBrightness() {
   float actualLux = lux;
   int actualHour = getHour();
-  Serial.println("AutoBrightness");
+  //Serial.println("AutoBrightness");
   float dayTimePercentage = model[actualHour - 7];
 
   int actualDuty;
@@ -311,10 +311,13 @@ void autoBrightness() {
     if (recordedHour != actualHour) {
       recordedHour = actualHour;
       numberOfSavedHours += 1;
+      Serial.println("Another hour recorded!");
+      Serial.println(recordedHour);
       actualDayData.dutyHour[numberOfSavedHours - 1] = String(duty) + "-" + String(actualHour);
       stats.dbStats[numberOfSavedDays - 1] = actualDayData;
     }
-
+    Serial.println(stats.dbStats[0].dutyHour[0]);
+    Serial.println(stats.dbStats[0].dutyHour[1]);
     if (actualHour == 0) {
       if (numberOfSavedDays < 2) {
         stats.dbStats[numberOfSavedDays - 1] = actualDayData;
