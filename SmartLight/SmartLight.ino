@@ -12,7 +12,7 @@
 boolean colorChanged = true;
 boolean recordStats = true;
 boolean autoLight = true;
-boolean lightSwitchedOn = true;
+boolean lightSwitchedOn = false;
 boolean calibrateSensitivity = false;
 boolean detectMotion = false;
 long delay_after_motion = 10000;
@@ -287,28 +287,26 @@ void loop(void) {
       detectTime = millis();
     }
   }
-  if (lightSwitchedOn) {
-    if (autoLight) {
-      autoBrightness();
-      Serial.println("auto");
-    } else {
-      Serial.println("normal");
-      ledcWrite(LEDC_CHANNEL_0_R, red);
-      ledcWrite(LEDC_CHANNEL_1_G, green);
-      ledcWrite(LEDC_CHANNEL_2_B, blue);
-    }
-  }
-
   if (motionDetected) {
     if ((millis() - detectTime)  > delay_after_motion) {
       motionDetected = false;
       detectTime = 0;
       transition(dutyBeforeDetection);
-      duty=dutyBeforeDetection;
+      duty = dutyBeforeDetection;
       Serial.println("Ended motion lighting");
     }
+  } else if (lightSwitchedOn) {
+      ledcWrite(LEDC_CHANNEL_0_R, red);
+      ledcWrite(LEDC_CHANNEL_1_G, green);
+      ledcWrite(LEDC_CHANNEL_2_B, blue);
+  } else if (autoLight) {
+      Serial.println("auto");
+      autoBrightness();
+  } else {
+    transition(0);
+    duty = 0;
   }
-
+  
   delay(300);
 }
 
