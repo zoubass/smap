@@ -9,6 +9,13 @@
 #include <ArduinoJson.h>
 
 //SWITCHES
+boolean offlineMode = true;
+String todayTempDate = "2019-06-27T12:00:00Z";
+String todayPreffix = "2019-06-27T12:";
+String todaySuffix = ":00Z";
+#define TIME_IN_SECONDS 1561474057
+
+
 boolean colorChanged = true;
 boolean recordStats = true;
 boolean autoLight = true;
@@ -25,6 +32,8 @@ struct LightingData {
   String dutyHour[24];
 };
 
+String motionsStats[50];
+
 struct Stats {
   LightingData dbStats[2];
 };
@@ -39,13 +48,15 @@ String recordedDay = "1";
 
 float model[17] = {0.6, 0.7, 0.6, 0.5, 0.5, 0.4, 0.2, 0, 0, 0.1, 0.4, 0.8, 0.9, 1, 0.6, 0.4, 0};
 
-const char *ssid = "ukacko";
-const char *password = "lfhkmedici2016";
+//Just AP
+const char *ssid = "Just AP";
+//umte1
+const char *password = "umte1";
 
 WebServer server(80);
 
 uint16_t lux        = 250;
-int maxLux     = 32;
+uint16_t maxLux     = 32;
 BH1750 lightMeter(0x23);
 
 #define LEDC_CHANNEL_0_R  0
@@ -73,7 +84,7 @@ String timeStamp;
 int duty = 256;
 int dutyBeforeDetection = 0;
 // pasmo ve kterem je pouzivano
-int GTM = 1;
+int GTM = 2;
 String formattedDate;
 String dayStamp;
 
@@ -95,6 +106,7 @@ void handleNotFound() {
 }
 
 String serialize() {
+  Serial.println("Generating lighting stats JSON response.");
   String json;
   StaticJsonBuffer<500> jsonBuffer;
   for (int i = 0; i < numberOfSavedDays; i++) {
@@ -114,7 +126,26 @@ String serialize() {
   return json;
 }
 
+String serializeMotion() {
+  Serial.println("Generating motion stats JSON response.");
+  String json;
+  StaticJsonBuffer<500> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["motion"] = "motion";
+  JsonArray& array = root.createNestedArray("time");
+
+  for (int i = 0; i < sizeof(motionsStats); i++) {
+    array.add(motionsStats[i]);
+  }
+  String jsonTemp;
+  root.prettyPrintTo(jsonTemp);
+
+  json = json + jsonTemp;
+  jsonTemp = "";
+  return json;
+}
 void setup(void) {
+
   Wire.begin();
 
   if (lightMeter.begin()) {
@@ -163,12 +194,12 @@ void setup(void) {
 
   server.on("/calibrate/on", []() {
     calibrateSensitivity = true;
-    server.send(200, "text/plain", "LED is ON!");
+    server.send(200, "text/plain", "Calibration is ON!");
   });
 
   server.on("/calibrate/off", []() {
     calibrateSensitivity = false;
-    server.send(200, "text/plain", "LED is ON!");
+    server.send(200, "text/plain", "Calibration is OFF!");
   });
 
   server.on("/led/on", []() {
@@ -211,6 +242,7 @@ void setup(void) {
       transition(dutyParam);
       duty = dutyParam;
       autoLight = false;
+      lightSwitchedOn = true;
       server.send(200, "text/plain", "Applied duty.");
     } else if (server.arg("red") != "") {
       red = server.arg("red").toInt();
@@ -246,21 +278,33 @@ void setup(void) {
   server.on("/stats", []() {
     server.send(200, "application/json", serialize());
   });
+  server.on("/motion_stats", []() {
+    server.send(200, "application/json", serializeMotion());
+  });
 
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("HTTP server started");
 
-  timeClient.begin();
-  timeClient.setTimeOffset(3600 * GTM);
+  if (!offlineMode) {
+    timeClient.begin();
+    timeClient.setTimeOffset(3600 * GTM);
+  }
 }
 
 boolean motionDetected = false;
 long detectTime = 0;
+int motionCount = 0;
 void loop(void) {
 
-  while (!timeClient.update()) {
-    timeClient.forceUpdate();
+  if (motionCount >= 50) {
+    memset(motionsStats, 0, sizeof(motionsStats));
+    motionCount = 0;
+  }
+  if (!offlineMode) {
+    while (!timeClient.update()) {
+      timeClient.forceUpdate();
+    }
   }
 
   server.handleClient();
@@ -283,35 +327,51 @@ void loop(void) {
       transition(256);
       duty = 256;
       motionDetected = true;
-      Serial.println("Motion Detected");
       detectTime = millis();
     }
   }
   if (motionDetected) {
     if ((millis() - detectTime)  > delay_after_motion) {
       motionDetected = false;
+      if (offlineMode) {
+        String minute = "";
+        if (motionCount < 10) {
+          minute = "0" + String(motionCount);
+        } else {
+          minute = String(motionCount);
+        }
+        motionsStats[motionCount++] = todayPreffix + minute + todaySuffix;
+        Serial.println(motionCount);
+      } else {
+        motionsStats[motionCount++] = timeClient.getFormattedDate();
+      }
+
       detectTime = 0;
       transition(dutyBeforeDetection);
       duty = dutyBeforeDetection;
       Serial.println("Ended motion lighting");
     }
   } else if (lightSwitchedOn) {
-      ledcWrite(LEDC_CHANNEL_0_R, red);
-      ledcWrite(LEDC_CHANNEL_1_G, green);
-      ledcWrite(LEDC_CHANNEL_2_B, blue);
+    ledcWrite(LEDC_CHANNEL_0_R, red);
+    ledcWrite(LEDC_CHANNEL_1_G, green);
+    ledcWrite(LEDC_CHANNEL_2_B, blue);
   } else if (autoLight) {
-      Serial.println("auto");
-      autoBrightness();
+    autoBrightness();
   } else {
     transition(0);
     duty = 0;
   }
-  
+
   delay(300);
 }
 
 int getHour() {
-  formattedDate = timeClient.getFormattedDate();
+  if (offlineMode) {
+    formattedDate = todayTempDate;
+  } else {
+    formattedDate = timeClient.getFormattedDate();
+  }
+
 
   int splitT = formattedDate.indexOf("T");
   dayStamp = formattedDate.substring(0, splitT);
@@ -332,16 +392,25 @@ void autoBrightness() {
   if (actualHour > 22 || actualHour < 7) {
     actualDuty = 0;
   } else {
+    //    Serial.println("-------------------------------");
+    //    Serial.println(actualDuty);
+    //    Serial.println(maxLux);
+    //
+    //    Serial.println(actualLux);
+    //
+    //    Serial.println(dayTimePercentage);
+    //    Serial.println("-------------------------------");
     int actualDutyWTime = (((1 - (actualLux / maxLux)) + dayTimePercentage) / 2) * 256;
     actualDuty = (1 - (actualLux / maxLux)) * 256;
-    //Serial.println("Actual duty");
-    //Serial.println(actualDuty);
-    actualDuty = actualDutyWTime;
 
+    actualDuty = actualDutyWTime;
     if (actualDuty < 0) {
       actualDuty = 0;
     }
   }
+
+  //  Serial.println("Doing transition");
+  //  Serial.println(actualDuty);
 
   transition(actualDuty);
   duty = actualDuty;
@@ -377,6 +446,8 @@ void autoBrightness() {
 }
 
 void transition(int toDuty) {
+  //  Serial.println("To duty");
+  //  Serial.println(toDuty);
   if (toDuty > duty ) {
     for (int i = duty; i <= toDuty; i++) {
       ledcWrite(LEDC_CHANNEL_0_R, i);
